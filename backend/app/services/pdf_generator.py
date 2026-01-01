@@ -5,6 +5,7 @@ from reportlab.lib import colors
 from io import BytesIO
 from typing import Optional
 from .utils import (
+    get_customer_terminology,
     get_theme_color,
     get_customers_from_statement,
     get_statement_type_config,
@@ -33,73 +34,78 @@ def generate_pdf(statement) -> bytes:
     margin = 50
     y = height - margin
     
-    # -------------------------------
-    # 1. DATA VALIDATION & SANITIZATION
-    # -------------------------------
-    # Get customers from statement (handles both old and new formats)
+# -------------------------------
+# 1. DATA VALIDATION & SANITIZATION
+# -------------------------------
     customers = get_customers_from_statement(statement)
-    customer = customers[0]  # Use first customer for now
-    
+
     if not statement.loans:
         raise ValueError("No loan data available for statement generation")
-    
+
     loan = statement.loans[0]
-    
-    # Sanitize customer data with defaults
-    address = customer.address or "Address not provided"
-    phone = customer.phone or "Phone not provided"
-    email = customer.email or "Email not provided"
-    
-    # Get loan type for conditional logic
-    loan_type = ""
-    if hasattr(loan, 'loan_type') and loan.loan_type:
-        loan_type = loan.loan_type.strip().lower()
-    
-    # Get statement configuration
+    loan_type = loan.loan_type.strip().lower() if hasattr(loan, 'loan_type') and loan.loan_type else ""
     statement_config = get_statement_type_config(loan_type)
     is_rent_statement = statement_config["is_rent"]
-    
-    # -------------------------------
-    # 2. DYNAMIC TITLE BASED ON LOAN TYPE
-    # -------------------------------
+
+    # Get primary customer for legacy fields (e.g., for account number fallback)
+    primary_customer = customers[0]
+# -------------------------------
+# 2. DYNAMIC TITLE & COMPANY HEADER
+# -------------------------------
     c.setFont("Helvetica-Oblique", 20)
     c.drawString(margin, y, "Epimonos LLC")
-    y -= 36  # Space after company name
-    
-    # Get statement title
+    y -= 36
+
+# Determine statement title
     statement_title = get_statement_title(loan_type)
-    
-    # Adjust title for multiple customers
     if len(customers) > 1:
-        statement_title = "Joint Account Statement"
-    
-    # Draw the dynamic title
+        statement_title = "Joint Tenancy Statement" if is_rent_statement else "Joint Account Statement"
+
     c.setFont("Helvetica-Bold", 16)
     c.drawString(margin, y, statement_title)
+    y -= 30
+
+# -------------------------------
+# 3. CUSTOMER INFO SECTION - OPTIMIZED FOR JOINT TENANTS
+# -------------------------------
+    c.setFont("Helvetica-Bold", 11)
+
+# Then use it in your PDF generator:
+    terminology = get_customer_terminology(loan_type, len(customers))
+
+# Draw header
+    header_text = terminology["header_plural"] if len(customers) > 1 else terminology["header_single"]
+    c.drawString(margin, y, header_text)
+    y -= 20
+
+# Draw names
+    customer_names = ", ".join([cust.name for cust in customers])
+    c.drawString(margin, y, customer_names)
+    y -= 20
+
+# Draw address with label
+    if primary_customer.address:
+        c.drawString(margin, y, f"{terminology['address_label']} {primary_customer.address}")
+        y -= 20
+
+# Display INDIVIDUAL contact details in a compact format
+    for i, customer in enumerate(customers):
+        contact_info = []
+        if customer.phone:
+            contact_info.append(f"Ph: {customer.phone}")
+        if customer.email:
+            contact_info.append(f"Email: {customer.email}")
     
-    c.setFont("Helvetica", 11)
-    y -= 30  # Space after title
-    
-    # -------------------------------
-    # 3. CUSTOMER INFO SECTION
-    # -------------------------------
-    # List all customers
-    for customer in customers:
-        c.drawString(margin, y, customer.name)
-        y -= 13
-        
-        if customer.address:
-            c.drawString(margin, y, customer.address)
-            y -= 13
-        
-        c.drawString(margin, y, f"Phone: {customer.phone}")
-        y -= 13
-        
-        c.drawString(margin, y, f"Email: {customer.email}")
-        y -= 20  # Extra space between customers
-    
-    # Store the bottom of customer info
-    customer_info_bottom = y + 20
+        if contact_info:
+            # For multiple customers, you might want to label them
+            if len(customers) > 1:
+                c.drawString(margin, y, f"Contact {i+1}: {', '.join(contact_info)}")
+            else:
+                c.drawString(margin, y, f"Contact: {', '.join(contact_info)}")
+            y -= 18
+
+# Store the bottom of customer info
+    customer_info_bottom = y + 5  # Small buffer
     
     # -------------------------------
     # 4. METADATA TABLE (Right)

@@ -1,8 +1,15 @@
-// Update to handle both single and multi-customer
-import type { StatementRequest, MultiCustomerStatementRequest } from "../types/statement";
+// services/api.ts
+import type { 
+  SingleCustomerStatementRequest, 
+  MultiCustomerStatementRequest,
+  Customer,
+  Loan
+} from "../types/statement";
 
-// Keep original for backward compatibility
-export async function generateStatement(payload: StatementRequest): Promise<Blob> {
+// Single customer endpoint
+export async function generateSingleStatement(
+  payload: SingleCustomerStatementRequest
+): Promise<Blob> {
   const response = await fetch("http://localhost:8000/api/statements", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -10,14 +17,17 @@ export async function generateStatement(payload: StatementRequest): Promise<Blob
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to generate statement: ${response.statusText}`);
+    const errorText = await response.text();
+    throw new Error(`Single statement error: ${response.status} ${errorText}`);
   }
 
   return await response.blob();
 }
 
-// New function for multiple customers
-export async function generateMultiCustomerStatement(payload: MultiCustomerStatementRequest): Promise<Blob> {
+// Multi-customer endpoint  
+export async function generateMultiCustomerStatement(
+  payload: MultiCustomerStatementRequest
+): Promise<Blob> {
   const response = await fetch("http://localhost:8000/api/generate-statement", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -25,8 +35,38 @@ export async function generateMultiCustomerStatement(payload: MultiCustomerState
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to generate multi-customer statement: ${response.statusText}`);
+    const errorText = await response.text();
+    throw new Error(`Multi-customer statement error: ${response.status} ${errorText}`);
   }
 
   return await response.blob();
+}
+
+// Smart function that routes automatically
+export async function generateStatement(
+  customers: Customer[],
+  loans: Loan[],
+  billingStart: string,
+  billingEnd: string,
+  format: "pdf" | "xlsx" | "txt"
+): Promise<Blob> {
+  if (customers.length === 1) {
+    const payload: SingleCustomerStatementRequest = {
+      customer: customers[0],
+      loans,
+      billing_period_start: billingStart,
+      billing_period_end: billingEnd,
+      statement_format: format
+    };
+    return generateSingleStatement(payload);
+  } else {
+    const payload: MultiCustomerStatementRequest = {
+      customers,
+      loans,
+      billing_period_start: billingStart,
+      billing_period_end: billingEnd,
+      statement_format: format
+    };
+    return generateMultiCustomerStatement(payload);
+  }
 }

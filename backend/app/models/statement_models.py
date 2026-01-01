@@ -32,7 +32,7 @@ class StatementRequest(BaseModel):
             raise ValueError('Either customer or customers must be provided')
         return v
 
-# OPTION 2: Only support multiple customers (cleaner)
+# OPTION 2: support multiple customers (cleaner)
 class MultiCustomerStatementRequest(BaseModel):
     customers: List[Customer]
     loans: List[Loan]

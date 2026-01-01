@@ -57,6 +57,39 @@ def get_customers_from_statement(statement) -> list:
     else:
         raise ValueError("No customer data found in statement")
 
+def get_customer_terminology(loan_type: str, customer_count: int) -> dict:
+    """Get appropriate terminology based on loan type and customer count."""
+    loan_type = loan_type.lower() if loan_type else ""
+    
+    if loan_type in ["rent", "rental", "lease"]:
+        return {
+            "header_single": "Tenant:",
+            "header_plural": "Tenants:",
+            "address_label": "Property Address:",
+            "individual_prefix": "Tenant"
+        }
+    elif loan_type in ["mortgage", "home", "house"]:
+        return {
+            "header_single": "Homeowner:",
+            "header_plural": "Homeowners:",
+            "address_label": "Property Address:",
+            "individual_prefix": "Homeowner"
+        }
+    elif loan_type in ["auto", "car", "vehicle"]:
+        return {
+            "header_single": "Vehicle Owner:",
+            "header_plural": "Vehicle Owners:",
+            "address_label": "Address:",
+            "individual_prefix": "Owner"
+        }
+    else:
+        # Default loan terminology
+        return {
+            "header_single": "Borrower:",
+            "header_plural": "Borrowers:",
+            "address_label": "Address:",
+            "individual_prefix": "Customer"
+        }
 
 def get_statement_type_config(loan_type: str) -> Dict[str, Any]:
     """

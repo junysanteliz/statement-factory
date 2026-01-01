@@ -1,17 +1,16 @@
 import { useState } from "react";
-import CustomerList from "../components/CustomerList";  // Changed from CustomerInfoForm to CustomerList
+import CustomerList from "../components/CustomerList";
 import BillingPeriodForm from "../components/BillingPeriodForm";
 import LoanList from "../components/LoanList";
 import FormatSelector from "../components/FormatSelector";
-import type { Customer, Loan, StatementRequest } from "../types/statement";
-import { generateStatement } from "../services/api";
+import type { Customer, Loan } from "../types/statement";
+import { generateStatement } from "../services/api"; // This is now the smart function
 
 export default function StatementGeneratorPage() {
   const [billingStart, setBillingStart] = useState("");
   const [billingEnd, setBillingEnd] = useState("");
   const [format, setFormat] = useState<"pdf" | "xlsx" | "txt">("pdf");
   
-  // Changed from single customer to array of customers
   const [customers, setCustomers] = useState<Customer[]>([{
     customer_id: "",
     name: "",
@@ -34,68 +33,49 @@ export default function StatementGeneratorPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // For backward compatibility with current backend that expects single customer
-    // You have 3 options:
-
-    // OPTION 1: Use first customer only (temporary until backend is updated)
-    const payload: StatementRequest = {
-      customer: customers[0],  // Just use the first customer for now
-      billing_period_start: billingStart,
-      billing_period_end: billingEnd,
-      loans,
-      statement_format: format
-    };
-
-    // OPTION 2: If you want to send all customers to updated backend:
-    /*
-    const payload = {
-      customers,  // Send array instead of single customer
-      billing_period_start: billingStart,
-      billing_period_end: billingEnd,
-      loans,
-      statement_format: format
-    };
-    */
-
-    // OPTION 3: Generate separate statements for each customer
-    /*
-    for (const customer of customers) {
-      const payload: StatementRequest = {
-        customer,
-        billing_period_start: billingStart,
-        billing_period_end: billingEnd,
-        loans,
-        statement_format: format
-      };
-      const blob = await generateStatement(payload);
-      // Download each separately or combine
-    }
-    */
+    console.log(`Submitting ${customers.length} customer(s):`, customers);
 
     try {
-      const blob = await generateStatement(payload);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
+      // ✅ Use the new generateStatement function that accepts separate parameters
+      const blob = await generateStatement(
+        customers,      // Customer array
+        loans,          // Loan array  
+        billingStart,   // Billing start
+        billingEnd,     // Billing end
+        format          // Format
+      );
       
-      // Create a filename with customer names if multiple
+      // Create filename
       let filename = "statement";
-      if (customers.length === 1 && customers[0].name) {
-        filename = customers[0].name.replace(/\s+/g, "_") + "_statement";
+      if (customers.length === 1 && customers[0].name.trim()) {
+        const customerName = customers[0].name.trim();
+        filename = customerName ? customerName.replace(/\s+/g, "_") + "_statement" : "statement";
       } else if (customers.length > 1) {
-        filename = "multi_customer_statement";
+        // Get first names for joint statement
+        const firstNames = customers
+          .map(c => {
+            const nameParts = c.name.trim().split(' ');
+            return nameParts.length > 0 && nameParts[0] ? nameParts[0] : "";
+          })
+          .filter(name => name)
+          .join('_');
+        
+        filename = firstNames ? `${firstNames}_joint_statement` : "joint_statement";
       }
       
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
       a.href = url;
       a.download = `${filename}.${format}`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Error generating statement:", error);
-      alert("Error generating statement. Please check the console for details.");
+      alert(`Error: ${error instanceof Error ? error.message : 'Failed to generate statement'}`);
     }
   };
-
-  // Optional: Show a warning if backend doesn't support multiple customers
-  const showBackendWarning = customers.length > 1;
 
   return (
     <div style={{ 
@@ -115,23 +95,7 @@ export default function StatementGeneratorPage() {
         Statement Generator
       </h1>
 
-      {showBackendWarning && (
-        <div style={{
-          backgroundColor: "#fff3cd",
-          border: "1px solid #ffeaa7",
-          borderRadius: "8px",
-          padding: "1rem",
-          marginBottom: "1.5rem",
-          color: "#856404"
-        }}>
-          ⚠️ <strong>Note:</strong> The backend currently supports single customer only. 
-          Only the first customer will be included in the statement. 
-          Update your backend to support multiple customers.
-        </div>
-      )}
-
       <form onSubmit={handleSubmit}>
-        {/* Replace CustomerInfoForm with CustomerList */}
         <div style={{
           backgroundColor: "white",
           padding: "1.5rem",
@@ -210,6 +174,17 @@ export default function StatementGeneratorPage() {
             color: "#7f8c8d"
           }}>
             {customers.length} customer(s) • {loans.length} loan(s)
+          </div>
+          
+          {/* Status indicator */}
+          <div style={{ 
+            marginTop: "0.5rem",
+            fontSize: "0.8rem",
+            color: customers.length > 1 ? "#27ae60" : "#7f8c8d"
+          }}>
+            {customers.length > 1 
+              ? `✓ Will generate joint statement via /generate-statement endpoint` 
+              : `✓ Will generate single statement via /statements endpoint`}
           </div>
         </div>
       </form>
