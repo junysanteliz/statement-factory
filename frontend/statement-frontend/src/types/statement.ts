@@ -24,3 +24,12 @@ export interface StatementRequest {
   loans: Loan[];
   statement_format: "pdf" | "xlsx" | "txt";
 }
+
+// New interface for multiple customers
+export interface MultiCustomerStatementRequest {
+  customers: Customer[];
+  billing_period_start: string;
+  billing_period_end: string;
+  loans: Loan[];
+  statement_format: "pdf" | "xlsx" | "txt";
+}

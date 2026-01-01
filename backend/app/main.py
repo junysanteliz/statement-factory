@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import statements
+from app.routers import generate_statement
 
 app = FastAPI(
     title="Statement Generator API",
@@ -19,6 +20,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(statements.router, prefix="/api")
+app.include_router(generate_statement.router, prefix="/api")
 
 @app.get("/")
 def root():

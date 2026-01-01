@@ -23,7 +23,8 @@ export default function LoanList({ loans, setLoans }: Props) {
       interest_rate: "",
       term_months: "",
       current_balance: "",
-      payment_due_date: ""
+      payment_due_date: "",
+        monthly_payment: ""
     }
   ]);
 };

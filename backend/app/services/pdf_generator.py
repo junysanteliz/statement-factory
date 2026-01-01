@@ -1,9 +1,18 @@
+# app/services/pdf_generator.py
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from io import BytesIO
-from datetime import datetime
 from typing import Optional
+from .utils import (
+    get_theme_color,
+    get_customers_from_statement,
+    get_statement_type_config,
+    get_statement_title,
+    truncate_text,
+    format_currency,
+    get_current_date
+)
 
 
 def generate_pdf(statement) -> bytes:
@@ -27,136 +36,179 @@ def generate_pdf(statement) -> bytes:
     # -------------------------------
     # 1. DATA VALIDATION & SANITIZATION
     # -------------------------------
-    customer = statement.customer
-    loan = statement.loans[0] if statement.loans else None
+    # Get customers from statement (handles both old and new formats)
+    customers = get_customers_from_statement(statement)
+    customer = customers[0]  # Use first customer for now
     
-    if not loan:
+    if not statement.loans:
         raise ValueError("No loan data available for statement generation")
+    
+    loan = statement.loans[0]
     
     # Sanitize customer data with defaults
     address = customer.address or "Address not provided"
     phone = customer.phone or "Phone not provided"
     email = customer.email or "Email not provided"
     
+    # Get loan type for conditional logic
+    loan_type = ""
+    if hasattr(loan, 'loan_type') and loan.loan_type:
+        loan_type = loan.loan_type.strip().lower()
+    
+    # Get statement configuration
+    statement_config = get_statement_type_config(loan_type)
+    is_rent_statement = statement_config["is_rent"]
+    
     # -------------------------------
-    # 2. HEADER: Customer Info (Left)
+    # 2. DYNAMIC TITLE BASED ON LOAN TYPE
     # -------------------------------
     c.setFont("Helvetica-Oblique", 20)
     c.drawString(margin, y, "Epimonos LLC")
     y -= 36  # Space after company name
     
+    # Get statement title
+    statement_title = get_statement_title(loan_type)
+    
+    # Adjust title for multiple customers
+    if len(customers) > 1:
+        statement_title = "Joint Account Statement"
+    
+    # Draw the dynamic title
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(margin, y, "Loan Statement")
+    c.drawString(margin, y, statement_title)
     
     c.setFont("Helvetica", 11)
     y -= 30  # Space after title
     
-    # Draw customer info with tighter spacing to avoid overlap
-    customer_lines = [
-        customer.name,
-        address,
-        f"Phone: {phone}",
-        f"Email: {email}"
-    ]
+    # -------------------------------
+    # 3. CUSTOMER INFO SECTION
+    # -------------------------------
+    # List all customers
+    for customer in customers:
+        c.drawString(margin, y, customer.name)
+        y -= 13
+        
+        if customer.address:
+            c.drawString(margin, y, customer.address)
+            y -= 13
+        
+        c.drawString(margin, y, f"Phone: {customer.phone}")
+        y -= 13
+        
+        c.drawString(margin, y, f"Email: {customer.email}")
+        y -= 20  # Extra space between customers
     
-    for line in customer_lines:
-        c.drawString(margin, y, line)
-        y -= 13  # Reduced from 15 for tighter spacing
-    
-    # Store the exact bottom of customer info
-    customer_info_bottom = y + 13  # Add back one line height
+    # Store the bottom of customer info
+    customer_info_bottom = y + 20
     
     # -------------------------------
-    # 3. HEADER: Metadata Table (Right) - FIXED WIDTH
+    # 4. METADATA TABLE (Right)
     # -------------------------------
-    meta_x = width - 200  # Reduced from 250 to prevent overflow
+    meta_x = width - 200
     meta_y = height - margin - 10
     
-    # Metadata labels - with reduced font size
-    c.setFont("Helvetica-Bold", 10)  # Reduced from 12
+    # Metadata labels
+    c.setFont("Helvetica-Bold", 10)
     c.drawRightString(meta_x - 5, meta_y, "Account Number:")
     c.drawRightString(meta_x - 5, meta_y - 15, "Billing Period:")
     c.drawRightString(meta_x - 5, meta_y - 30, "Statement Date:")
     
-    # Metadata values - with wrapping/truncation for long text
-    c.setFont("Helvetica", 10)  # Reduced from 12
+    # Metadata values
+    c.setFont("Helvetica", 10)
     
     # Account number
-    c.drawString(meta_x, meta_y, customer.customer_id[:15])  # Truncate if too long
+    account_number = loan.loan_id if hasattr(loan, 'loan_id') and loan.loan_id else customer.customer_id
+    c.drawString(meta_x, meta_y, truncate_text(str(account_number), 15))
     
-    # Billing period - split if too long
+    # Billing period
     billing_period = f"{statement.billing_period_start} - {statement.billing_period_end}"
     if len(billing_period) > 25:
-        # Split into two lines
-        c.drawString(meta_x, meta_y - 15, billing_period[:25])
-        c.drawString(meta_x, meta_y - 25, billing_period[25:50] + "...")
+        c.drawString(meta_x, meta_y - 15, truncate_text(billing_period, 25, ""))
+        c.drawString(meta_x, meta_y - 25, truncate_text(billing_period[25:], 25))
     else:
         c.drawString(meta_x, meta_y - 15, billing_period)
     
     # Statement date
-    c.drawString(meta_x, meta_y - 30, datetime.now().strftime("%m/%d/%Y"))
+    c.drawString(meta_x, meta_y - 30, get_current_date())
     
     # -------------------------------
-    # 4. GREEN HIGHLIGHT BOX (Payment Due) - POSITIONED SAFELY
+    # 5. HIGHLIGHT BOX (Payment Due)
     # -------------------------------
-    # Position box with MORE space below customer info
-    box_y = customer_info_bottom - 80  # Increased from 40 to 60 for more space
-    box_height = 60  # Reduced from 60
+    box_y = customer_info_bottom - 80
+    box_height = 60
     box_width = width - (2 * margin)
     
-    # Draw green background
-    c.setFillColorRGB(0.80, 0.95, 0.80)  # Light green
-    c.roundRect(margin, box_y, box_width, box_height, 8, fill=1, stroke=0)  # Smaller radius
+    # Get theme color based on loan type
+    theme_color = get_theme_color(loan_type)
+    c.setFillColorRGB(*theme_color)
+    c.roundRect(margin, box_y, box_width, box_height, 8, fill=1, stroke=0)
     
-    # Draw text on green box
+    # Draw text on colored box
     c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 13)  # Reduced from 14
-    c.drawString(margin + 15, box_y + 30,
-                 f"Monthly Payment Due: ${loan.monthly_payment:,.2f}")
+    c.setFont("Helvetica-Bold", 13)
     
-    c.setFont("Helvetica", 11)  # Reduced from 12
-    c.drawString(margin + 15, box_y + 12,
-                 f"Payment Due Date: {loan.payment_due_date}")
+    # Use appropriate payment text based on statement type
+    if is_rent_statement:
+        payment_title = f"Monthly Rent Due: {format_currency(float(loan.monthly_payment))}"
+    else:
+        payment_prefix = f"{loan_type.title()} " if loan_type and loan_type != "loan" else ""
+        payment_title = f"Monthly {payment_prefix}Payment Due: {format_currency(float(loan.monthly_payment))}"
+    
+    c.drawString(margin + 15, box_y + 30, payment_title.strip())
+    
+    c.setFont("Helvetica", 11)
+    c.drawString(margin + 15, box_y + 12, f"Payment Due Date: {loan.payment_due_date}")
     
     # -------------------------------
-    # 5. OVERVIEW SECTION
+    # 6. OVERVIEW SECTION
     # -------------------------------
-    y = box_y - 35  # Space below green box
+    y = box_y - 35
     
-    c.setFont("Helvetica-Bold", 12)  # Reduced from 13
+    c.setFont("Helvetica-Bold", 12)
     c.drawString(margin, y, "Account Overview")
     
-    # Overview items with aligned values
     y -= 20
-    c.setFont("Helvetica", 10)  # Reduced from 11
+    c.setFont("Helvetica", 10)
     
+    # Build overview items conditionally
     overview_items = [
-        ("Previous Balance:", f"${loan.current_balance:,.2f}"),
-        ("Interest Accrued:", "$0.00"),
-        ("Fees:", "$0.00"),
-        ("Current Balance:", f"${loan.current_balance:,.2f}")
+        ("Previous Balance:", format_currency(float(loan.current_balance))),
     ]
+    
+    # Only include "Interest Accrued" for non-rent statements
+    if not is_rent_statement:
+        overview_items.append(("Interest Accrued:", "$0.00"))
+    
+    overview_items.extend([
+        ("Fees:", "$0.00"),
+        ("Current Balance:", format_currency(float(loan.current_balance)))
+    ])
     
     for label, value in overview_items:
         c.drawString(margin, y, label)
-        c.drawString(margin + 180, y, value)  # Adjusted position
-        y -= 14  # Reduced from 15
+        c.drawString(margin + 180, y, value)
+        y -= 14
     
     # -------------------------------
-    # 6. LOAN SUMMARY TABLE - FIXED COLUMN WIDTHS
+    # 7. LOAN/RENT SUMMARY TABLE
     # -------------------------------
-    y -= 25  # Additional space before table
+    y -= 25
     
-    c.setFont("Helvetica-Bold", 13)  # Reduced from 13
-    c.drawString(margin, y, "Loan Summary")
+    # Use appropriate summary title
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(margin, y, statement_config["summary_title"])
     
     y -= 18
     
-    # Table headers with adjusted widths to fit page
-    headers = ["Billing Period", "Monthly Payment", "Remaining Balance", "APR"]  # Changed "Remaining" to shorter label
-    col_widths = [116, 106, 126, 66]  # Reduced widths
+    # Table headers
+    headers = ["Billing Period", "Monthly Payment", "Remaining Balance", "APR"]
+    col_widths = [116, 106, 126, 66]
     
-    c.setFont("Helvetica-Bold", 10)  # Reduced from 10
+    # For rent statements, adjust the header text
+    if is_rent_statement:
+        headers = ["Billing Period", "Monthly Rent", "Remaining Balance", "Rate"]
+    
+    c.setFont("Helvetica-Bold", 10)
     x = margin
     for i, header in enumerate(headers):
         c.drawString(x, y, header)
@@ -164,19 +216,20 @@ def generate_pdf(statement) -> bytes:
     
     # Table data row
     y -= 14
-    c.setFont("Helvetica", 10)  # Reduced from 10
+    c.setFont("Helvetica", 10)
     x = margin
     
-    # Truncate billing period if too long
     billing_period_cell = f"{statement.billing_period_start} - {statement.billing_period_end}"
-    if len(billing_period_cell) > 18:
-        billing_period_cell = billing_period_cell[:15] + "..."
+    billing_period_cell = truncate_text(billing_period_cell, 18)
+    
+    # For rent statements, show N/A for APR
+    apr_value = f"{loan.interest_rate}%" if not is_rent_statement else "N/A"
     
     table_data = [
         billing_period_cell,
-        f"${loan.monthly_payment:,.2f}",
-        f"${loan.current_balance:,.2f}",
-        f"{loan.interest_rate}%"
+        format_currency(float(loan.monthly_payment)),
+        format_currency(float(loan.current_balance)),
+        apr_value
     ]
     
     for i, cell in enumerate(table_data):
@@ -190,22 +243,33 @@ def generate_pdf(statement) -> bytes:
     c.line(margin, y, width - margin, y)
     
     # -------------------------------
-    # 7. FOOTER
+    # 8. ADD LOAN TYPE IN SUMMARY (Only for non-rent statements)
+    # -------------------------------
+    if not is_rent_statement and hasattr(loan, 'loan_type') and loan.loan_type:
+        y -= 20
+        c.setFont("Helvetica", 10)
+        c.drawString(margin, y, f"Loan Type: {loan.loan_type}")
+    
+    # -------------------------------
+    # 9. FOOTER
     # -------------------------------
     footer_y = 40
     
-    # Footer text
-    c.setFont("Helvetica", 8)  # Reduced from 9
+    c.setFont("Helvetica", 8)
     c.setFillColor(colors.gray)
-    c.drawString(margin, footer_y, 
-                 "For questions or support, please reach out via email.")
+    
+    # Customize footer message based on statement type
+    if is_rent_statement:
+        c.drawString(margin, footer_y, "For questions about your rent or lease, please contact your property manager.")
+    else:
+        c.drawString(margin, footer_y, "For questions or support, please reach out via email.")
     
     # Page number
     page_num = c.getPageNumber()
     c.drawRightString(width - margin, footer_y, f"Page {page_num}")
     
     # -------------------------------
-    # 8. FINALIZE PDF
+    # 10. FINALIZE PDF
     # -------------------------------
     c.save()
     pdf = buffer.getvalue()
@@ -214,9 +278,13 @@ def generate_pdf(statement) -> bytes:
     return pdf
 
 
-# Alternative version with even more conservative spacing
 def generate_pdf_conservative(statement) -> bytes:
-    """More conservative version with guaranteed spacing."""
+    """
+    More conservative version with guaranteed spacing and smaller fonts.
+    Useful for statements with lots of content.
+    """
+    from .utils import get_current_date
+    
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     
@@ -224,15 +292,16 @@ def generate_pdf_conservative(statement) -> bytes:
     margin = 60  # Increased margin
     y = height - margin
     
-    customer = statement.customer
+    customers = get_customers_from_statement(statement)
+    customer = customers[0]
     loan = statement.loans[0]
     
     # 1. TITLE
-    c.setFont("Helvetica-Bold", 14)  # Smaller title
+    c.setFont("Helvetica-Bold", 14)
     c.drawString(margin, y, "LOAN STATEMENT")
     y -= 25
     
-    # 2. CUSTOMER INFO (LEFT) - COMPACT
+    # 2. CUSTOMER INFO - COMPACT
     c.setFont("Helvetica", 10)
     info_lines = [
         customer.name,
@@ -242,11 +311,11 @@ def generate_pdf_conservative(statement) -> bytes:
     ]
     
     for line in info_lines:
-        if line.strip():  # Only draw non-empty lines
+        if line.strip():
             c.drawString(margin, y, line)
             y -= 12
     
-    # 3. METADATA (RIGHT) - VERY COMPACT
+    # 3. METADATA - VERY COMPACT
     meta_y = height - margin - 10
     c.setFont("Helvetica-Bold", 9)
     c.drawRightString(width - 150, meta_y, "Acct #:")
@@ -256,44 +325,32 @@ def generate_pdf_conservative(statement) -> bytes:
     c.setFont("Helvetica", 9)
     c.drawString(width - 145, meta_y, customer.customer_id[:10])
     
-    # Truncate billing period aggressively
+    # Billing period
     period = f"{statement.billing_period_start} - {statement.billing_period_end}"
-    if len(period) > 20:
-        period = period[:17] + "..."
+    period = truncate_text(period, 20)
     c.drawString(width - 145, meta_y - 12, period)
-    c.drawString(width - 145, meta_y - 24, datetime.now().strftime("%m/%d/%y"))
+    c.drawString(width - 145, meta_y - 24, get_current_date("%m/%d/%y"))
     
-    # 4. GREEN BOX - WITH GUARANTEED CLEARANCE
-    # Force box to start well below everything
-    box_y = min(y, meta_y - 40) - 40  # Whichever is lower, minus buffer
+    # 4. HIGHLIGHT BOX
+    box_y = min(y, meta_y - 40) - 40
     box_height = 45
     box_width = width - (2 * margin)
     
-    c.setFillColorRGB(0.80, 0.95, 0.80)
+    # Get theme color
+    loan_type = loan.loan_type.lower() if hasattr(loan, 'loan_type') and loan.loan_type else ""
+    theme_color = get_theme_color(loan_type)
+    c.setFillColorRGB(*theme_color)
     c.roundRect(margin, box_y, box_width, box_height, 5, fill=1, stroke=0)
     
     c.setFillColor(colors.black)
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(margin + 10, box_y + 25, f"Payment Due: ${loan.monthly_payment:,.2f}")
+    c.drawString(margin + 10, box_y + 25, f"Payment Due: {format_currency(float(loan.monthly_payment))}")
     
     c.setFont("Helvetica", 10)
     c.drawString(margin + 10, box_y + 10, f"Due: {loan.payment_due_date}")
     
-    # 5. CONTINUE WITH REST (using similar conservative sizing)
-    y = box_y - 30
-    
-    # [Rest of the content with similarly reduced font sizes...]
+    # Continue with rest of content...
+    # You would add the rest of your conservative layout here
     
     c.save()
-    pdf = buffer.getvalue()
-    buffer.close()
-    return pdf
-
-
-# Optional helper function for debugging layout
-def _debug_draw_bounds(canvas_obj, x, y, width, height, color=(1, 0, 0)):
-    """Draw a colored rectangle for debugging layout boundaries."""
-    canvas_obj.setStrokeColorRGB(*color)
-    canvas_obj.setLineWidth(0.5)
-    canvas_obj.rect(x, y, width, height)
-    canvas_obj.setStrokeColor(colors.black)  # Reset to black
+    return buffer.getvalue()
