@@ -5,6 +5,7 @@ from reportlab.lib import colors
 from io import BytesIO
 from typing import Optional
 from .utils import (
+    format_payment_due_date,
     get_customer_terminology,
     get_theme_color,
     get_customers_from_statement,
@@ -141,7 +142,7 @@ def generate_pdf(statement) -> bytes:
     # 5. HIGHLIGHT BOX (Payment Due)
     # -------------------------------
     box_y = customer_info_bottom - 80
-    box_height = 60
+    box_height = 80
     box_width = width - (2 * margin)
     
     # Get theme color based on loan type
@@ -154,16 +155,25 @@ def generate_pdf(statement) -> bytes:
     c.setFont("Helvetica-Bold", 13)
     
     # Use appropriate payment text based on statement type
-    if is_rent_statement:
+    if loan_type == "rent to own":
+    # Special case for "Rent to own"
+        payment_title = f"Monthly Rent To Own Payment Due: {format_currency(float(loan.monthly_payment))}"
+    elif is_rent_statement:
+    # Regular rent/lease/rental
         payment_title = f"Monthly Rent Due: {format_currency(float(loan.monthly_payment))}"
     else:
+    # All other loan types (auto, personal, mortgage, etc.)
         payment_prefix = f"{loan_type.title()} " if loan_type and loan_type != "loan" else ""
         payment_title = f"Monthly {payment_prefix}Payment Due: {format_currency(float(loan.monthly_payment))}"
     
-    c.drawString(margin + 15, box_y + 30, payment_title.strip())
+    c.drawString(margin + 15, box_y + 50, payment_title.strip())
     
+    c.setFont("Helvetica-Bold", 11)
+    # ✅ FORMAT THE PAYMENT DUE DATE
+    formatted_due_date = format_payment_due_date(loan.payment_due_date)
+    c.drawString(margin + 15, box_y + 32, f"Payment Due Date: {formatted_due_date}")
     c.setFont("Helvetica", 11)
-    c.drawString(margin + 15, box_y + 12, f"Payment Due Date: {loan.payment_due_date}")
+    c.drawString(margin + 15, box_y + 16, f"*Please make your payment within the 10 day grace period as stated in the contract.")
     
     # -------------------------------
     # 6. OVERVIEW SECTION
@@ -208,7 +218,7 @@ def generate_pdf(statement) -> bytes:
     
     # Table headers
     headers = ["Billing Period", "Monthly Payment", "Remaining Balance", "APR"]
-    col_widths = [116, 106, 126, 66]
+    col_widths = [136, 106, 126, 66]
     
     # For rent statements, adjust the header text
     if is_rent_statement:
@@ -226,7 +236,7 @@ def generate_pdf(statement) -> bytes:
     x = margin
     
     billing_period_cell = f"{statement.billing_period_start} - {statement.billing_period_end}"
-    billing_period_cell = truncate_text(billing_period_cell, 18)
+    billing_period_cell = truncate_text(billing_period_cell, 25)
     
     # For rent statements, show N/A for APR
     apr_value = f"{loan.interest_rate}%" if not is_rent_statement else "N/A"

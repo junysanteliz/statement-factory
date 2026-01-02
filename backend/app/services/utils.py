@@ -36,6 +36,52 @@ def get_theme_color(loan_type: str) -> tuple:
     
     return themes.get(loan_type, (0.80, 0.95, 0.80))  # Default green
 
+def format_date(date_string: str, format_style: str = "long") -> str:
+    """
+    Format date string to various styles.
+    
+    Args:
+        date_string: Date string in any common format
+        format_style: One of: "long", "short", "numeric", "month_year"
+        
+    Returns:
+        str: Formatted date string
+        
+    Examples:
+        "2024-01-15" -> "January 15, 2024" (long)
+        "2024-01-15" -> "Jan 15, 2024" (short)
+        "2024-01-15" -> "01/15/2024" (numeric)
+        "2024-01-15" -> "January 2024" (month_year)
+    """
+    if not date_string:
+        return "Not specified"
+    
+    date_formats_to_try = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y"]
+    
+    for date_format in date_formats_to_try:
+        try:
+            date_obj = datetime.strptime(str(date_string).strip(), date_format)
+            
+            if format_style == "long":
+                return date_obj.strftime("%B %d, %Y")  # January 15, 2024
+            elif format_style == "short":
+                return date_obj.strftime("%b %d, %Y")   # Jan 15, 2024
+            elif format_style == "numeric":
+                return date_obj.strftime("%m/%d/%Y")    # 01/15/2024
+            elif format_style == "month_year":
+                return date_obj.strftime("%B %Y")       # January 2024
+            else:
+                return date_obj.strftime("%B %d, %Y")   # Default to long
+                
+        except ValueError:
+            continue
+    
+    return str(date_string)  # Fallback to original if parsing fails
+
+# For backward compatibility
+def format_payment_due_date(date_string: str) -> str:
+    """Alias for format_date with long format."""
+    return format_date(date_string, "long")
 
 def get_customers_from_statement(statement) -> list:
     """
@@ -103,7 +149,7 @@ def get_statement_type_config(loan_type: str) -> Dict[str, Any]:
     """
     loan_type = loan_type.strip().lower() if loan_type else ""
     
-    is_rent = loan_type in ["rent", "rental", "lease"]
+    is_rent = loan_type in ["rent", "rental", "lease", "rent to own"]
     
     # Mapping of loan types to display names
     type_display_map = {
@@ -117,6 +163,7 @@ def get_statement_type_config(loan_type: str) -> Dict[str, Any]:
         "rent": "Rent",
         "rental": "Rent",
         "lease": "Rent",
+        "rent to own": "Rent To Own",
         "student": "Student Loan",
         "education": "Student Loan",
         "business": "Business Loan",
